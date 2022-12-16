@@ -12,6 +12,62 @@ function autobind(_: any, _2: string, descriptor: PropertyDescriptor) {
   return adjDescriptor;
 }
 
+// project type
+
+enum ProjectStatus {
+  Active,
+  Finished,
+}
+
+class Project {
+  constructor(
+    public id: string,
+    public title: string,
+    public description: string,
+    public prople: number,
+    public status: ProjectStatus
+  ) {}
+}
+// Project State management
+
+type Listener = (items: Project[]) => void;
+
+class ProjectState {
+  private listeners: Listener[] = [];
+  private projects: Project[] = [];
+  private static instance: ProjectState;
+
+  private constructor() {}
+
+  static getInstance() {
+    if (this.instance) {
+      return this.instance;
+    }
+    this.instance = new ProjectState();
+    return this.instance;
+  }
+
+  addListener(listenerFn: Listener) {
+    this.listeners.push(listenerFn);
+  }
+
+  addProject(title: string, description: string, people: number) {
+    const newProject = new Project(
+      Math.random().toString(),
+      title,
+      description,
+      people,
+      ProjectStatus.Active
+    );
+    this.projects.push(newProject);
+    for (const listenerFn of this.listeners) {
+      listenerFn(this.projects.slice());
+    }
+  }
+}
+
+const projectState = ProjectState.getInstance();
+
 // Validation
 interface Validatable {
   value?: string | number;
@@ -42,54 +98,93 @@ function Validate(validatable: Validatable) {
   return isValid;
 }
 
-// Project list Class
-class ProjectList {
+// Component Base Class
+abstract class Component<T extends HTMLElement, U extends HTMLElement> {
   templateEl: HTMLTemplateElement;
-  hostEl: HTMLDivElement;
-  element: HTMLElement;
-  constructor(private type: "active" | "finished") {
-    this.templateEl = <HTMLTemplateElement>(
-      document.getElementById("project-list")!
-    );
-    this.hostEl = <HTMLDivElement>document.getElementById("app")!;
+  hostEl: T;
+  element: U;
+
+  constructor(
+    templateId: string,
+    hostElId: string,
+    insertAtStart: boolean,
+    newElementId?: string
+  ) {
+    this.templateEl = <HTMLTemplateElement>document.getElementById(templateId)!;
+    this.hostEl = <T>document.getElementById(hostElId)!;
 
     const importedNode = document.importNode(this.templateEl.content, true);
-    this.element = <HTMLElement>importedNode.firstElementChild;
+    this.element = <U>importedNode.firstElementChild;
+    if (newElementId) {
+      this.element.id = newElementId;
+    }
+    this.attach(insertAtStart);
+  }
+  private attach(insertAtStart: boolean) {
+    this.hostEl.insertAdjacentElement(
+      insertAtStart ? "afterbegin" : "beforeend",
+      this.element
+    );
+  }
+
+  abstract configure(): void;
+  abstract renderContent(): void;
+}
+
+// Project list Class
+class ProjectList extends Component<HTMLDivElement, HTMLElement> {
+  assignedProjects: Project[];
+  constructor(private type: "active" | "finished") {
+    super("project-list", "app", false, `${type}-projects`);
+    this.assignedProjects = [];
+
     this.element.id = `${this.type}-projects`;
-    this.attach();
+
+    this.configure();
     this.renderContent();
   }
 
-  private renderContent() {
+  private renderProjects() {
+    const listEl = <HTMLUListElement>(
+      document.getElementById(`${this.type}-projects-list`)
+    );
+    listEl.innerHTML = "";
+    for (const prjItem of this.assignedProjects) {
+      const listItem = document.createElement("li");
+      listItem.textContent = prjItem.title;
+      listEl?.appendChild(listItem);
+    }
+  }
+
+  configure() {
+    projectState.addListener((projects: Project[]) => {
+      const relevantProjects = projects.filter((prj) => {
+        if (this.type === "active") {
+          return prj.status === ProjectStatus.Active;
+        }
+        return prj.status === ProjectStatus.Finished;
+      });
+      this.assignedProjects = relevantProjects;
+      this.renderProjects();
+    });
+  }
+
+  renderContent() {
     const listId = `${this.type}-projects-list`;
     this.element.querySelector("ul")!.id = listId;
     this.element.querySelector("h2")!.textContent =
       this.type.toUpperCase() + "PROJECTS";
   }
-
-  private attach() {
-    this.hostEl.insertAdjacentElement("beforeend", this.element);
-  }
 }
 
-class ProjectInput {
-  templateEl: HTMLTemplateElement;
-  hostEl: HTMLDivElement;
-  element: HTMLFormElement;
+class ProjectInput extends Component<HTMLDivElement, HTMLFormElement> {
   titleInputField: HTMLInputElement;
   descriptionInputField: HTMLInputElement;
   peopleInputField: HTMLInputElement;
 
   constructor() {
-    this.templateEl = <HTMLTemplateElement>(
-      document.getElementById("project-input")!
-    );
-    this.hostEl = <HTMLDivElement>document.getElementById("app")!;
+    super("project-input", "app", true, "user-input");
 
-    const importedNode = document.importNode(this.templateEl.content, true);
-    this.element = <HTMLFormElement>importedNode.firstElementChild;
-
-    this.element.id = "user-input";
     this.titleInputField = <HTMLInputElement>(
       this.element.querySelector("#title")
     );
@@ -101,12 +196,12 @@ class ProjectInput {
     );
 
     this.configure();
-    this.attach();
+  }
+  configure() {
+    this.element.addEventListener("submit", this.submitHandler);
   }
 
-  private attach() {
-    this.hostEl.insertAdjacentElement("afterbegin", this.element);
-  }
+  renderContent() {}
 
   private gatherUserInput(): [string, string, number] | void {
     const enteredTitle = this.titleInputField.value;
@@ -147,16 +242,12 @@ class ProjectInput {
     const userInput = this.gatherUserInput();
     if (Array.isArray(userInput)) {
       const [title, desc, people] = userInput;
-      console.log(title, desc, people);
+      projectState.addProject(title, desc, people);
       this.clearInputs();
     }
-  }
-
-  private configure() {
-    this.element.addEventListener("submit", this.submitHandler);
   }
 }
 
 const prjInpt = new ProjectInput();
-const activePrjList = new  ProjectList('active')
-const finishedPrjList = new ProjectList('finished')
+const activePrjList = new ProjectList("active");
+const finishedPrjList = new ProjectList("finished");
